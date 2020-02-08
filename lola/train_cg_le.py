@@ -31,7 +31,7 @@ def clone_update(mainPN_clone):
 
 def train(env, *, num_episodes, trace_length, batch_size,
           corrections, opp_model, grid_size, gamma, hidden, bs_mul, lr,
-          welfare_0, welfare_1,
+          welfare0, welfare1,
           mem_efficient=True):
     #Setting the training parameters
     batch_size = batch_size #How many experience traces to use for each training step.
@@ -220,8 +220,8 @@ def train(env, *, num_episodes, trace_length, batch_size,
             sample_return1 = np.reshape(
                 get_monte_carlo(trainBatch1[2], y, trace_length, batch_size),
                 [batch_size, -1])
-            sample_return0 = welfare_0(sample_return0, sample_return1)
-            sample_return1 = welfare_1(sample_return0, sample_return1)
+            sample_return0 = welfare0(sample_return0, sample_return1)
+            sample_return1 = welfare1(sample_return1, sample_return0)
 
             # need to multiple with
             pow_series = np.arange(trace_length)
@@ -231,8 +231,8 @@ def train(env, *, num_episodes, trace_length, batch_size,
                 trainBatch0[2] - np.mean(trainBatch0[2]), [-1, trace_length])
             sample_reward1 = discount * np.reshape(
                 trainBatch1[2]- np.mean(trainBatch1[2]), [-1, trace_length])
-            sample_reward0 = welfare_0(sample_reward0, sample_reward1)
-            sample_reward1 = welfare_1(sample_reward0, sample_reward1)
+            sample_reward0 = welfare0(sample_reward0, sample_reward1)
+            sample_reward1 = welfare1(sample_reward1, sample_reward0)
 
             state_input0 = np.concatenate(trainBatch0[0], axis=0)
             state_input1 = np.concatenate(trainBatch1[0], axis=0)

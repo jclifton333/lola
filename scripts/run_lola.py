@@ -4,19 +4,19 @@ import click
 import time
 
 from lola import logger
-
+from welfare_functions import welfare_factory
 from lola.envs import *
 
 
 @click.command()
 # Experiment parameters
-@click.option("--exp_name", type=str, default="IPD",
+@click.option("--exp_name", type=str, default="CoinGame",
               help="Name of the experiment (and correspondingly environment).")
 @click.option("--num_episodes", type=int, default=None,
               help="Number of episodes.")
 @click.option("--trace_length", type=int, default=None,
               help="Lenght of the traces.")
-@click.option("--exact/--no-exact", default=True,
+@click.option("--exact/--no-exact", default=False,
               help="Whether to run the exact version of LOLA.")
 @click.option("--pseudo/--no-pseudo", default=False,
               help="Only used with exact version of LOLA.")
@@ -25,8 +25,10 @@ from lola.envs import *
 @click.option("--trials", type=int, default=2, help="Number of trials.")
 
 # Learning parameters
-@click.option("--lola/--no-lola", default=True,
+@click.option("--lola/--no-lola", default=False,
               help="Add the crazy LOLA corrections to the computation.")
+@click.option("--welfare0", default="util")
+@click.option("--welfare1", default="util")
 @click.option("--opp_model/--no-opp_model", default=False,
               help="Whether to model opponent or use true parameters "
                    "(use only for coin game).")
@@ -106,8 +108,10 @@ def main(exp_name, num_episodes, trace_length, exact, pseudo, grid_size,
                   hidden=hidden,
                   mem_efficient=mem_efficient)
     elif exp_name == "CoinGame":
+        welfare0 = welfare_factory("welfare0")
+        welfare1 = welfare_factory("welfare1")
         def run(env):
-            from lola.train_cg import train
+            from lola.train_cg_le import train
             train(env,
                   num_episodes=num_episodes,
                   trace_length=trace_length,
@@ -119,6 +123,8 @@ def main(exp_name, num_episodes, trace_length, exact, pseudo, grid_size,
                   corrections=lola,
                   opp_model=opp_model,
                   hidden=hidden,
+                  welfare0=welfare0,
+                  welfare1=welfare1,
                   mem_efficient=mem_efficient)
 
     # Instantiate the environment
