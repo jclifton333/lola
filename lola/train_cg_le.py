@@ -31,8 +31,8 @@ def clone_update(mainPN_clone):
 
 def train(env, *, num_episodes, trace_length, batch_size,
           corrections, opp_model, grid_size, gamma, hidden, bs_mul, lr,
-          welfare0, welfare1,
-          mem_efficient=True):
+          welfare0, welfare1, punish=False,
+          mem_efficient=True, num_punish_episodes=1000):
     #Setting the training parameters
     batch_size = batch_size #How many experience traces to use for each training step.
     trace_length = trace_length #How long each experience trace will be when training
@@ -50,6 +50,10 @@ def train(env, *, num_episodes, trace_length, batch_size,
     tf.reset_default_graph()
     mainPN = []
     mainPN_step = []
+    coopPN = []
+    coopPN_step = []
+    punishPN = []
+    punishPN_step = []
     agent_list = np.arange(total_n_agents)
     for agent in range(total_n_agents):
         mainPN.append(
@@ -67,6 +71,23 @@ def train(env, *, num_episodes, trace_length, batch_size,
             mainPN_clone.append(
                 Pnetwork('clone' + str(agent), h_size[agent], agent, env,
                          trace_length=trace_length, batch_size=batch_size))
+
+    # ToDo: Can make more memory-efficient by only having punish and coop networks for non-le player
+    if punish: # Initialize punishment networks and networks for tracking cooperative updates
+        punishPN.append(
+            Pnetwork('punish' + str(agent), h_size[agent], agent, env,
+                     trace_length=trace_length, batch_size=batch_size, ))
+        punishPN_step.append(
+            Pnetwork('punish' + str(agent), h_size[agent], agent, env,
+                     trace_length=trace_length, batch_size=batch_size,
+                     reuse=True, step=True))
+        coopPN.append(
+            Pnetwork('coop' + str(agent), h_size[agent], agent, env,
+                     trace_length=trace_length, batch_size=batch_size, ))
+        coopPN_step.append(
+            Pnetwork('coop' + str(agent), h_size[agent], agent, env,
+                     trace_length=trace_length, batch_size=batch_size,
+                     reuse=True, step=True))
 
     if not mem_efficient:
         cube, cube_ops = make_cube(trace_length)
@@ -93,6 +114,8 @@ def train(env, *, num_episodes, trace_length, batch_size,
     aList = []
 
     total_steps = 0
+    has_defected = False
+    time_to_punish = False
 
     # Make a path for our model to be saved in.
     if not os.path.exists(path):
@@ -121,6 +144,8 @@ def train(env, *, num_episodes, trace_length, batch_size,
         sP = env.reset()
         updated =True
         for i in range(num_episodes):
+            a0_defected = False
+            a1_defected = False
             episodeBuffer = []
             for ii in range(n_agents):
                 episodeBuffer.append([])
@@ -152,20 +177,60 @@ def train(env, *, num_episodes, trace_length, batch_size,
                 j += 1
                 a_all = []
                 lstm_state = []
+                lstm_punish_state = []
                 for agent_role, agent in enumerate(these_agents):
-                    a, lstm_s = sess.run(
-                        [
-                            mainPN_step[agent].predict,
-                            mainPN_step[agent].lstm_state_output
-                        ],
-                        feed_dict={
-                            mainPN_step[agent].state_input: s,
-                            mainPN_step[agent].lstm_state: lstm_state_old[agent]
-                        }
-                    )
-                    lstm_state.append(lstm_s)
-                    a_all.append(a)
+                    # Actual actions and lstm states
+                    if punish and time_to_punish and agent_role == 0: # Assuming only agent 0 punishes
+                        a, lstm_punish_s = sess.run(
+                            [
+                                punishPN_step[agent].predict,
+                                punishPN_step[agent].lstm_state_output
+                            ],
+                            feed_dict={
+                                punishPN_step[agent].state_input: s,
+                                punishPN_step[agent].lstm_state: lstm_state_old[agent]
+                            }
+                        )
+                        lstm_punish_state.append(lstm_s)
+                        a_all.append(a)
+                    else:
+                        a, lstm_s = sess.run(
+                            [
+                                mainPN_step[agent].predict,
+                                mainPN_step[agent].lstm_state_output
+                            ],
+                            feed_dict={
+                                mainPN_step[agent].state_input: s,
+                                mainPN_step[agent].lstm_state: lstm_state_old[agent]
+                            }
+                        )
+                        lstm_state.append(lstm_s)
+                        a_all.append(a)
 
+                    # Cooperative actions and lstm states
+                    if punish and agent_role == 1: # Assuming only agent 1 can be non-cooperative
+                        a_coop, lstm_s_coop = sess.run(
+                            [
+                                mainPN_step[agent].predict,
+                                mainPN_step[agent].lstm_state_output
+                            ],
+                            feed_dict={
+                                mainPN_step[agent].state_input: s,
+                                mainPN_step[agent].lstm_state: lstm_state_old[agent]
+                            }
+                        )
+                        lstm_coop_state = lstm_s_coop
+                        a_coop_all = a_coop
+
+                # ToDo: make sure the policies which are being compared are deterministic (i.e. account for
+                # ToDo: random seed where necessary
+                if punish and not time_to_punish and not has_defected:
+                    if a_coop == a_all[1]:
+                        has_defected = False
+                    else:
+                        has_defected = True
+
+                # ToDo: need separate trainBatch for punishment
                 trainBatch0[0].append(s)
                 trainBatch1[0].append(s)
                 trainBatch0[1].append(a_all[0])
@@ -220,8 +285,11 @@ def train(env, *, num_episodes, trace_length, batch_size,
             sample_return1 = np.reshape(
                 get_monte_carlo(trainBatch1[2], y, trace_length, batch_size),
                 [batch_size, -1])
-            sample_return0 = welfare0(sample_return0, sample_return1)
-            sample_return1 = welfare1(sample_return1, sample_return0)
+            if punish and time_to_punish:
+                sample_return0 = -sample_return1
+            else:
+                sample_return0 = welfare0(sample_return0, sample_return1)
+                sample_return1 = welfare1(sample_return1, sample_return0)
 
             # need to multiple with
             pow_series = np.arange(trace_length)
@@ -231,8 +299,12 @@ def train(env, *, num_episodes, trace_length, batch_size,
                 trainBatch0[2] - np.mean(trainBatch0[2]), [-1, trace_length])
             sample_reward1 = discount * np.reshape(
                 trainBatch1[2]- np.mean(trainBatch1[2]), [-1, trace_length])
-            sample_reward0 = welfare0(sample_reward0, sample_reward1)
-            sample_reward1 = welfare1(sample_reward1, sample_reward0)
+            # ToDo: Check that calculation of rewards and returns are correct given how they're used
+            if punish and time_to_punish:
+                sample_reward0 = -sample_reward1
+            else:
+                sample_reward0 = welfare0(sample_reward0, sample_reward1)
+                sample_reward1 = welfare1(sample_reward1, sample_reward0)
 
             state_input0 = np.concatenate(trainBatch0[0], axis=0)
             state_input1 = np.concatenate(trainBatch1[0], axis=0)
@@ -289,54 +361,69 @@ def train(env, *, num_episodes, trace_length, batch_size,
                         np.linalg.norm(theta_2_vals - theta_1_vals_clone))
 
             # Update policy networks
+            if punish and time_to_punish:
+                network_to_update = punishPN
+            else:
+                network_to_update = mainPN
+
             feed_dict={
-                mainPN[0].state_input: state_input0,
-                mainPN[0].sample_return: sample_return0,
-                mainPN[0].actions: actions0,
-                mainPN[1].state_input: state_input1,
-                mainPN[1].sample_return: sample_return1,
-                mainPN[1].actions: actions1,
-                mainPN[0].sample_reward: sample_reward0,
-                mainPN[1].sample_reward: sample_reward1,
-                mainPN[0].gamma_array: np.reshape(discount, [1, -1]),
-                mainPN[1].gamma_array: np.reshape(discount, [1, -1]),
-                mainPN[0].next_value: value_0_next,
-                mainPN[1].next_value: value_1_next,
-                mainPN[0].gamma_array_inverse:
+                network_to_update[0].state_input: state_input0,
+                network_to_update[0].sample_return: sample_return0,
+                network_to_update[0].actions: actions0,
+                network_to_update[1].state_input: state_input1,
+                network_to_update[1].sample_return: sample_return1,
+                network_to_update[1].actions: actions1,
+                network_to_update[0].sample_reward: sample_reward0,
+                network_to_update[1].sample_reward: sample_reward1,
+                network_to_update[0].gamma_array: np.reshape(discount, [1, -1]),
+                network_to_update[1].gamma_array: np.reshape(discount, [1, -1]),
+                network_to_update[0].next_value: value_0_next,
+                network_to_update[1].next_value: value_1_next,
+                network_to_update[0].gamma_array_inverse:
                     np.reshape(discount_array, [1, -1]),
-                mainPN[1].gamma_array_inverse:
+                network_to_update[1].gamma_array_inverse:
                     np.reshape(discount_array, [1, -1]),
             }
-            if opp_model:
-                feed_dict.update({
-                    mainPN_clone[0].state_input:state_input1,
-                    mainPN_clone[0].actions: actions1,
-                    mainPN_clone[0].sample_return: sample_return1,
-                    mainPN_clone[0].sample_reward: sample_reward1,
-                    mainPN_clone[1].state_input:state_input0,
-                    mainPN_clone[1].actions: actions0,
-                    mainPN_clone[1].sample_return: sample_return0,  # This is what forms the target of the PNetwork
-                    mainPN_clone[1].sample_reward: sample_reward0,
-                    mainPN_clone[0].gamma_array: np.reshape(discount,[1,-1]),
-                    mainPN_clone[1].gamma_array:  np.reshape(discount,[1,-1]),
-                })
-            values, _, _, update1, update2 = sess.run(
-                [
-                    mainPN[0].value,
-                    mainPN[0].updateModel,
-                    mainPN[1].updateModel,
-                    mainPN[0].delta,
-                    mainPN[1].delta
-                ],
-                feed_dict=feed_dict)
+            # if opp_model:
+            #     feed_dict.update({
+            #         mainPN_clone[0].state_input:state_input1,
+            #         mainPN_clone[0].actions: actions1,
+            #         mainPN_clone[0].sample_return: sample_return1,
+            #         mainPN_clone[0].sample_reward: sample_reward1,
+            #         mainPN_clone[1].state_input:state_input0,
+            #         mainPN_clone[1].actions: actions0,
+            #         mainPN_clone[1].sample_return: sample_return0,  # This is what forms the target of the PNetwork
+            #         mainPN_clone[1].sample_reward: sample_reward0,
+            #         mainPN_clone[0].gamma_array: np.reshape(discount,[1,-1]),
+            #         mainPN_clone[1].gamma_array:  np.reshape(discount,[1,-1]),
+            #     })
+            # values, _, _, update1, update2 = sess.run(
+            #     [
+            #         mainPN[0].value,
+            #         mainPN[0].updateModel,
+            #         mainPN[1].updateModel,
+            #         mainPN[0].delta,
+            #         mainPN[1].delta
+            #     ],
+            #     feed_dict=feed_dict)
 
-            update(mainPN, lr, update1 / bs_mul, update2 / bs_mul)
+            update(network_to_update, lr, update1 / bs_mul, update2 / bs_mul)
             updated = True
             print('update params')
 
             episodes_run_counter[agent] = episodes_run_counter[agent] * 0
             episodes_actions[agent] = episodes_actions[agent] * 0
             episodes_reward[agent] = episodes_reward[agent] * 0
+
+            # Update punishment tracking
+            if punish and time_to_punish:
+                punish_episode_counter -= 1
+                if punish_counter == 0:
+                  time_to_punish = False
+            else:
+                if has_defected:
+                    time_to_punish = True
+                    punish_episode_counter = num_punish_episodes
 
             if len(rList) % summary_len == 0 and len(rList) != 0 and updated:
                 updated = False
