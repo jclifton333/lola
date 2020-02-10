@@ -230,7 +230,7 @@ def train(env, *, num_episodes, trace_length, batch_size,
                     else:
                         has_defected = True
 
-                # ToDo: need separate trainBatch for punishment
+                # ToDo: need separate trainBatch for punishment?
                 trainBatch0[0].append(s)
                 trainBatch1[0].append(s)
                 trainBatch0[1].append(a_all[0])
@@ -410,6 +410,19 @@ def train(env, *, num_episodes, trace_length, batch_size,
             update(network_to_update, lr, update1 / bs_mul, update2 / bs_mul)
             updated = True
             print('update params')
+
+            # Update cooperative policy network
+            feed_dict = {
+                coopPN[0].state_input: state_input0,
+                coopPN[0].sample_return: sample_return0,
+                coopPN[0].actions: actions0,
+                coopPN[0].sample_reward: sample_reward0,
+                coopPN[0].gamma_array: np.reshape(discount, [1, -1]),
+                coopPN[0].next_value: value_0_next,
+                coopPN[0].gamma_array_inverse:
+                    np.reshape(discount_array, [1, -1]),
+            }
+            update(coopPN, lr, None, None) # ToDo: what are update1 and update2 here?
 
             episodes_run_counter[agent] = episodes_run_counter[agent] * 0
             episodes_actions[agent] = episodes_actions[agent] * 0
