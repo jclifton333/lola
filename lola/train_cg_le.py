@@ -4,6 +4,7 @@ Training funcion for the Coin Game.
 import os
 import numpy as np
 import tensorflow as tf
+import pdb
 
 from . import logger
 
@@ -73,20 +74,16 @@ def train(env, *, num_episodes, trace_length, batch_size,
                          trace_length=trace_length, batch_size=batch_size))
 
     if punish:  # Initialize punishment networks and networks for tracking cooperative updates
-        punishPN.append(
-            Pnetwork('punish' + str(0), h_size[0], 0, env,
-                     trace_length=trace_length, batch_size=batch_size, ))
-        punishPN_step.append(
-            Pnetwork('punish' + str(0), h_size[0], 0, env,
+        punishPN = Pnetwork('punish' + str(0), h_size[0], 0, env,
+                     trace_length=trace_length, batch_size=batch_size, )
+        punishPN_step = Pnetwork('punish' + str(0), h_size[0], 0, env,
                      trace_length=trace_length, batch_size=batch_size,
-                     reuse=True, step=True))
-        coopPN.append(
-            Pnetwork('coop' + str(1), h_size[1], 1, env,
-                     trace_length=trace_length, batch_size=batch_size, ))
-        coopPN_step.append(
-            Pnetwork('coop' + str(1), h_size[1], 1, env,
+                     reuse=True, step=True)
+        coopPN = Pnetwork('coop' + str(1), h_size[1], 1, env,
+                     trace_length=trace_length, batch_size=batch_size, )
+        coopPN_step = Pnetwork('coop' + str(1), h_size[1], 1, env,
                      trace_length=trace_length, batch_size=batch_size,
-                     reuse=True, step=True))
+                     reuse=True, step=True)
 
     if not mem_efficient:
         cube, cube_ops = make_cube(trace_length)
@@ -167,29 +164,33 @@ def train(env, *, num_episodes, trace_length, batch_size,
             aAll = np.zeros((env.NUM_ACTIONS * 2))
             j = 0
 
+            # ToDo: need to track lstm states for main and punish nets
             lstm_state = []
             for agent in these_agents:
                 episodes_run[agent] += 1
                 episodes_run_counter[agent] += 1
                 lstm_state.append(np.zeros((batch_size, h_size[agent]*2)))
+            if punish: 
+                lstm_coop_state = np.zeros((batch_size, h_size[1]**2))
 
             while j < max_epLength:
                 lstm_state_old = lstm_state
+                if punish: lstm_coop_state_old = lstm_coop_state
                 j += 1
                 a_all = []
                 lstm_state = []
                 lstm_punish_state = []
                 for agent_role, agent in enumerate(these_agents):
                     # Actual actions and lstm states
-                    if punish and time_to_punish and agent_role == 0: # Assuming only agent 0 punishes
+                    if punish and time_to_punish and agent == 0: # Assuming only agent 0 punishes
                         a, lstm_punish_s = sess.run(
                             [
-                                punishPN_step[agent].predict,
-                                punishPN_step[agent].lstm_state_output
+                                punishPN_step.predict,
+                                punishPN_step.lstm_state_output
                             ],
                             feed_dict={
-                                punishPN_step[agent].state_input: s,
-                                punishPN_step[agent].lstm_state: lstm_state_old[agent]
+                                punishPN_step.state_input: s,
+                                punishPN_step.lstm_state: lstm_state_old[agent]
                             }
                         )
                         lstm_punish_state.append(lstm_s)
@@ -209,15 +210,16 @@ def train(env, *, num_episodes, trace_length, batch_size,
                         a_all.append(a)
 
                     # Cooperative actions and lstm states
-                    if punish and agent_role == 1: # Assuming only agent 1 can be non-cooperative
+                    if punish and agent == 1: # Assuming only agent 1 can be non-cooperative
+                        pdb.set_trace()
                         a_coop, lstm_s_coop = sess.run(
                             [
-                                mainPN_step[agent].predict,
-                                mainPN_step[agent].lstm_state_output
+                                coopPN_step.predict,
+                                coopPN_step.lstm_state_output
                             ],
                             feed_dict={
-                                mainPN_step[agent].state_input: s,
-                                mainPN_step[agent].lstm_state: lstm_state_old[agent]
+                                coopPN_step.state_input: s,
+                                coopPN_step.lstm_state: lstm_coop_state_old
                             }
                         )
                         lstm_coop_state = lstm_s_coop
@@ -226,7 +228,7 @@ def train(env, *, num_episodes, trace_length, batch_size,
                 # ToDo: make sure the policies which are being compared are deterministic (i.e. account for
                 # ToDo: random seed where necessary
                 if punish and not time_to_punish and not has_defected:
-                    if a_coop == a_all[1]:
+                    if np.array_equal(a_coop, a_all[1]):
                         has_defected = False
                     else:
                         has_defected = True
@@ -240,8 +242,9 @@ def train(env, *, num_episodes, trace_length, batch_size,
 
                 # Add obs for coop network
                 # ToDo: update coop only if has_defected == False?
-                coopTrainBatch1[0].append(s)
-                coopTrainBatch[1].append(a_all[1])
+                if punish:
+                    coopTrainBatch1[0].append(s)
+                    coopTrainBatch1[1].append(a_all[1])
 
                 a_all = np.transpose(np.vstack(a_all))
 
@@ -257,9 +260,10 @@ def train(env, *, num_episodes, trace_length, batch_size,
                 trainBatch0[5].append(lstm_state[0])
                 trainBatch1[5].append(lstm_state[1])
 
-                coopTrainBatch1[2].append(s1)  # Coop train batch doesn't have entry for rewards b/c welfare function
-                coopTrainBatch1[3].append(d)
-                coopTrainBatch1[4].append(lstm_coop_state)
+                if punish: 
+                    coopTrainBatch1[2].append(s1)  # Coop train batch doesn't have entry for rewards b/c welfare function
+                    coopTrainBatch1[3].append(d)
+                    coopTrainBatch1[4].append(lstm_coop_state)
 
                 total_steps += 1
                 for agent_role, agent in enumerate(these_agents):
@@ -327,6 +331,16 @@ def train(env, *, num_episodes, trace_length, batch_size,
                 [batch_size, trace_length, env.ob_space_shape[0],
                  env.ob_space_shape[1], env.ob_space_shape[2]])[:,-1,:,:,:]
 
+            if punish:
+                value_coop_next = sess.run(
+                    coopPN.value,
+                    feed_dict={
+                        coopPN_step.state_input: last_state,
+                        coopPN_step.lstm_state: lstm_coop_state,
+                    }
+                )
+
+            # ToDo: should be option for updating punishPN if punish==True
             value_0_next, value_1_next = sess.run(
                 [mainPN_step[0].value, mainPN_step[1].value],
                 feed_dict={
@@ -336,14 +350,7 @@ def train(env, *, num_episodes, trace_length, batch_size,
                     mainPN_step[1].lstm_state: lstm_state[1],
                 })
 
-            value_coop_next = sess.run(
-                coopPN.value,
-                feed_dict={
-                    coopPN_step.state_input: last_state,
-                    coopPN_step.lstm_state: lstm_coop_state,
-                }
-            )
-
+            
             # if opp_model:
             #     ## update local clones
             #     update_clone = [mainPN_clone[0].update, mainPN_clone[1].update]
@@ -431,7 +438,7 @@ def train(env, *, num_episodes, trace_length, batch_size,
             print('update params')
 
             # Update cooperative policy network
-            if not (punish and time_to_punish):
+            if punish and not time_to_punish:
                 feed_dict = {
                     coopPN.state_input: state_input1,
                     coopPN.sample_return: sample_return0,  # Assuming returns for agent 0 are given by welfare fn

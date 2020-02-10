@@ -57,7 +57,7 @@ from lola.envs import *
 
 def main(exp_name, num_episodes, trace_length, exact, pseudo, grid_size,
          trials, lr, lr_correction, batch_size, bs_mul, simple_net, hidden,
-         num_units, reg, gamma, lola, opp_model, mem_efficient):
+         num_units, reg, gamma, lola, welfare0, welfare1, opp_model, mem_efficient):
     # Sanity
     assert exp_name in {"CoinGame", "IPD", "IMP"}
 
@@ -125,6 +125,7 @@ def main(exp_name, num_episodes, trace_length, exact, pseudo, grid_size,
                   hidden=hidden,
                   welfare0=welfare_fn0,
                   welfare1=welfare_fn1,
+                  punish=True,
                   mem_efficient=mem_efficient)
 
     # Instantiate the environment
