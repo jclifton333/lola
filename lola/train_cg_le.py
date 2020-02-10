@@ -72,20 +72,19 @@ def train(env, *, num_episodes, trace_length, batch_size,
                 Pnetwork('clone' + str(agent), h_size[agent], agent, env,
                          trace_length=trace_length, batch_size=batch_size))
 
-    # ToDo: Can make more memory-efficient by only having punish and coop networks for non-le player
-    if punish: # Initialize punishment networks and networks for tracking cooperative updates
+    if punish:  # Initialize punishment networks and networks for tracking cooperative updates
         punishPN.append(
-            Pnetwork('punish' + str(agent), h_size[agent], agent, env,
+            Pnetwork('punish' + str(0), h_size[0], 0, env,
                      trace_length=trace_length, batch_size=batch_size, ))
         punishPN_step.append(
-            Pnetwork('punish' + str(agent), h_size[agent], agent, env,
+            Pnetwork('punish' + str(0), h_size[0], 0, env,
                      trace_length=trace_length, batch_size=batch_size,
                      reuse=True, step=True))
         coopPN.append(
-            Pnetwork('coop' + str(agent), h_size[agent], agent, env,
+            Pnetwork('coop' + str(1), h_size[1], 1, env,
                      trace_length=trace_length, batch_size=batch_size, ))
         coopPN_step.append(
-            Pnetwork('coop' + str(agent), h_size[agent], agent, env,
+            Pnetwork('coop' + str(1), h_size[1], 1, env,
                      trace_length=trace_length, batch_size=batch_size,
                      reuse=True, step=True))
 
@@ -161,6 +160,8 @@ def train(env, *, num_episodes, trace_length, batch_size,
 
             trainBatch0 = [[], [], [], [], [], []]
             trainBatch1 = [[], [], [], [], [], []]
+            coopTrainBatch1 = [[], [], [], [], [], []]
+
             d = False
             rAll = np.zeros((4))
             aAll = np.zeros((env.NUM_ACTIONS * 2))
@@ -231,10 +232,16 @@ def train(env, *, num_episodes, trace_length, batch_size,
                         has_defected = True
 
                 # ToDo: need separate trainBatch for punishment?
+                # Add obs for policy network
                 trainBatch0[0].append(s)
                 trainBatch1[0].append(s)
                 trainBatch0[1].append(a_all[0])
                 trainBatch1[1].append(a_all[1])
+
+                # Add obs for coop network
+                # ToDo: update coop only if has_defected == False?
+                coopTrainBatch1[0].append(s)
+                coopTrainBatch[1].append(a_all[1])
 
                 a_all = np.transpose(np.vstack(a_all))
 
@@ -249,6 +256,10 @@ def train(env, *, num_episodes, trace_length, batch_size,
                 trainBatch1[4].append(d)
                 trainBatch0[5].append(lstm_state[0])
                 trainBatch1[5].append(lstm_state[1])
+
+                coopTrainBatch1[2].append(s1)  # Coop train batch doesn't have entry for rewards b/c welfare function
+                coopTrainBatch1[3].append(d)
+                coopTrainBatch1[4].append(lstm_coop_state)
 
                 total_steps += 1
                 for agent_role, agent in enumerate(these_agents):
@@ -325,40 +336,48 @@ def train(env, *, num_episodes, trace_length, batch_size,
                     mainPN_step[1].lstm_state: lstm_state[1],
                 })
 
-            if opp_model:
-                ## update local clones
-                update_clone = [mainPN_clone[0].update, mainPN_clone[1].update]
-                feed_dict = {
-                    mainPN_clone[0].state_input: state_input1,
-                    mainPN_clone[0].actions: actions1,
-                    mainPN_clone[0].sample_return: sample_return1,
-                    mainPN_clone[0].sample_reward: sample_reward1,
-                    mainPN_clone[1].state_input: state_input0,
-                    mainPN_clone[1].actions: actions0,
-                    mainPN_clone[1].sample_return: sample_return0,
-                    mainPN_clone[1].sample_reward: sample_reward0,
-                    mainPN_clone[0].gamma_array: np.reshape(discount,[1,-1]),
-                    mainPN_clone[1].gamma_array: np.reshape(discount,[1,-1]),
+            value_coop_next = sess.run(
+                coopPN.value,
+                feed_dict={
+                    coopPN_step.state_input: last_state,
+                    coopPN_step.lstm_state: lstm_coop_state,
                 }
-                num_loops = 50 if i == 0 else 1
-                for i in range(num_loops):
-                    sess.run(update_clone, feed_dict=feed_dict)
+            )
 
-                theta_1_vals = mainPN[0].getparams()
-                theta_2_vals = mainPN[1].getparams()
-                theta_1_vals_clone = mainPN_clone[0].getparams()
-                theta_2_vals_clone = mainPN_clone[1].getparams()
+            # if opp_model:
+            #     ## update local clones
+            #     update_clone = [mainPN_clone[0].update, mainPN_clone[1].update]
+            #     feed_dict = {
+            #         mainPN_clone[0].state_input: state_input1,
+            #         mainPN_clone[0].actions: actions1,
+            #         mainPN_clone[0].sample_return: sample_return1,
+            #         mainPN_clone[0].sample_reward: sample_reward1,
+            #         mainPN_clone[1].state_input: state_input0,
+            #         mainPN_clone[1].actions: actions0,
+            #         mainPN_clone[1].sample_return: sample_return0,
+            #         mainPN_clone[1].sample_reward: sample_reward0,
+            #         mainPN_clone[0].gamma_array: np.reshape(discount,[1,-1]),
+            #         mainPN_clone[1].gamma_array: np.reshape(discount,[1,-1]),
+            #     }
+            #     num_loops = 50 if i == 0 else 1
+            #     for i in range(num_loops):
+            #         sess.run(update_clone, feed_dict=feed_dict)
 
-                if len(rList) % summary_len == 0:
-                    print('params check before optimization')
-                    print('theta_1_vals', theta_1_vals)
-                    print('theta_2_vals_clone', theta_2_vals_clone)
-                    print('theta_2_vals', theta_2_vals)
-                    print('theta_1_vals_clone', theta_1_vals_clone)
-                    print('diff between theta_1 and theta_2_vals_clone',
-                        np.linalg.norm(theta_1_vals - theta_2_vals_clone))
-                    print('diff between theta_2 and theta_1_vals_clone',
-                        np.linalg.norm(theta_2_vals - theta_1_vals_clone))
+            #     theta_1_vals = mainPN[0].getparams()
+            #     theta_2_vals = mainPN[1].getparams()
+            #     theta_1_vals_clone = mainPN_clone[0].getparams()
+            #     theta_2_vals_clone = mainPN_clone[1].getparams()
+
+            #     if len(rList) % summary_len == 0:
+            #         print('params check before optimization')
+            #         print('theta_1_vals', theta_1_vals)
+            #         print('theta_2_vals_clone', theta_2_vals_clone)
+            #         print('theta_2_vals', theta_2_vals)
+            #         print('theta_1_vals_clone', theta_1_vals_clone)
+            #         print('diff between theta_1 and theta_2_vals_clone',
+            #             np.linalg.norm(theta_1_vals - theta_2_vals_clone))
+            #         print('diff between theta_2 and theta_1_vals_clone',
+            #             np.linalg.norm(theta_2_vals - theta_1_vals_clone))
 
             # Update policy networks
             if punish and time_to_punish:
@@ -397,32 +416,40 @@ def train(env, *, num_episodes, trace_length, batch_size,
             #         mainPN_clone[0].gamma_array: np.reshape(discount,[1,-1]),
             #         mainPN_clone[1].gamma_array:  np.reshape(discount,[1,-1]),
             #     })
-            # values, _, _, update1, update2 = sess.run(
-            #     [
-            #         mainPN[0].value,
-            #         mainPN[0].updateModel,
-            #         mainPN[1].updateModel,
-            #         mainPN[0].delta,
-            #         mainPN[1].delta
-            #     ],
-            #     feed_dict=feed_dict)
+            values, _, _, update1, update2 = sess.run(
+              [
+                  mainPN[0].value,
+                  mainPN[0].updateModel,
+                  mainPN[1].updateModel,
+                  mainPN[0].delta,
+                  mainPN[1].delta
+              ],
+              feed_dict=feed_dict)
 
             update(network_to_update, lr, update1 / bs_mul, update2 / bs_mul)
             updated = True
             print('update params')
 
             # Update cooperative policy network
-            feed_dict = {
-                coopPN[0].state_input: state_input0,
-                coopPN[0].sample_return: sample_return0,
-                coopPN[0].actions: actions0,
-                coopPN[0].sample_reward: sample_reward0,
-                coopPN[0].gamma_array: np.reshape(discount, [1, -1]),
-                coopPN[0].next_value: value_0_next,
-                coopPN[0].gamma_array_inverse:
-                    np.reshape(discount_array, [1, -1]),
-            }
-            update(coopPN, lr, None, None) # ToDo: what are update1 and update2 here?
+            if not (punish and time_to_punish):
+                feed_dict = {
+                    coopPN.state_input: state_input1,
+                    coopPN.sample_return: sample_return0,  # Assuming returns for agent 0 are given by welfare fn
+                    coopPN.actions: actions1,
+                    coopPN.sample_reward: sample_reward0,  # Assuming returns for agent 0 are given by welfare fn
+                    coopPN.gamma_array: np.reshape(discount, [1, -1]),
+                    coopPN.next_value: value_coop_next,
+                    coopPN.gamma_array_inverse:
+                        np.reshape(discount_array, [1, -1]),
+                }
+                values, _, update_coop = sess.run(
+                    [
+                        coopPN.value,
+                        coopPN.updateModel,
+                        coopPN.delta
+                    ],
+                    feed_dict=feed_dict)
+                update(coopPN, lr, update_coop, None) # ToDo: change update to accomodate None
 
             episodes_run_counter[agent] = episodes_run_counter[agent] * 0
             episodes_actions[agent] = episodes_actions[agent] * 0
