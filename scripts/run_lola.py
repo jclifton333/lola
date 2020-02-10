@@ -4,7 +4,7 @@ import click
 import time
 
 from lola import logger
-from welfare_functions import welfare_factory
+from lola.welfare_functions import welfare_factory
 from lola.envs import *
 
 
@@ -108,8 +108,8 @@ def main(exp_name, num_episodes, trace_length, exact, pseudo, grid_size,
                   hidden=hidden,
                   mem_efficient=mem_efficient)
     elif exp_name == "CoinGame":
-        welfare0 = welfare_factory("welfare0")
-        welfare1 = welfare_factory("welfare1")
+        welfare_fn0 = welfare_factory(welfare0)
+        welfare_fn1 = welfare_factory(welfare1)
         def run(env):
             from lola.train_cg_le import train
             train(env,
@@ -123,8 +123,8 @@ def main(exp_name, num_episodes, trace_length, exact, pseudo, grid_size,
                   corrections=lola,
                   opp_model=opp_model,
                   hidden=hidden,
-                  welfare0=welfare0,
-                  welfare1=welfare1,
+                  welfare0=welfare_fn0,
+                  welfare1=welfare_fn1,
                   mem_efficient=mem_efficient)
 
     # Instantiate the environment
