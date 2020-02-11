@@ -79,11 +79,12 @@ def train(env, *, num_episodes, trace_length, batch_size,
                          trace_length=trace_length, batch_size=batch_size))
 
     if punish:  # Initialize punishment networks and networks for tracking cooperative updates
-        punishPN = Pnetwork('punish' + str(0), h_size[0], 0, env,
-                     trace_length=trace_length, batch_size=batch_size, )
-        punishPN_step = Pnetwork('punish' + str(0), h_size[0], 0, env,
-                     trace_length=trace_length, batch_size=batch_size,
-                     reuse=True, step=True)
+        for agent in range(total_n_agents):
+            punishPN.append(Pnetwork('punish' + str(agent), h_size[agent], agent, env,
+                         trace_length=trace_length, batch_size=batch_size, ))
+            punishPN_step.append(Pnetwork('punish' + str(agent), h_size[agent], agent, env,
+                         trace_length=trace_length, batch_size=batch_size,
+                         reuse=True, step=True))
         coopPN = Pnetwork('coop' + str(1), h_size[1], 1, env,
                      trace_length=trace_length, batch_size=batch_size, )
         coopPN_step = Pnetwork('coop' + str(1), h_size[1], 1, env,
@@ -97,9 +98,9 @@ def train(env, *, num_episodes, trace_length, batch_size,
 
     if not opp_model:
         corrections_func(mainPN, batch_size, trace_length, corrections, cube)
+        corrections_func(punishPN, batch_size, trace_length, corrections, cube)
         if punish:
             corrections_func_single(coopPN, batch_size, trace_length)
-            corrections_func_single(punishPN, batch_size, trace_length)
     else:
         corrections_func([mainPN[0], mainPN_clone[1]],
                          batch_size, trace_length, corrections, cube)
@@ -193,18 +194,19 @@ def train(env, *, num_episodes, trace_length, batch_size,
                 lstm_punish_state = []
                 for agent_role, agent in enumerate(these_agents):
                     # Actual actions and lstm states
-                    if punish and time_to_punish and agent == 0: # Assuming only agent 0 punishes
+                    # ToDo: separate lstm state for punish nets
+                    if punish and time_to_punish: 
                         a, lstm_punish_s = sess.run(
                             [
-                                punishPN_step.predict,
-                                punishPN_step.lstm_state_output
+                                punishPN_step[agent].predict,
+                                punishPN_step[agent].lstm_state_output
                             ],
                             feed_dict={
-                                punishPN_step.state_input: s,
-                                punishPN_step.lstm_state: lstm_state_old[agent]
+                                punishPN_step[agent].state_input: s,
+                                punishPN_step[agent].lstm_state: lstm_state_old[agent]
                             }
                         )
-                        lstm_punish_state.append(lstm_s)
+                        lstm_state.append(lstm_s)
                         a_all.append(a)
                     else:
                         a, lstm_s = sess.run(
@@ -355,7 +357,7 @@ def train(env, *, num_episodes, trace_length, batch_size,
                 value_coop_next = sess.run(
                     coopPN_step.value,
                     feed_dict={coopPN_step.state_input: last_state,
-                               coopPN_step.lstm_state: lstm_coop_state}
+                               coopPN_step.lstm_state:  lstm_coop_state}
                 )
             # if opp_model:
             #     ## update local clones
@@ -471,7 +473,7 @@ def train(env, *, num_episodes, trace_length, batch_size,
             # Update punishment tracking
             if punish and time_to_punish:
                 punish_episode_counter -= 1
-                if punish_counter == 0:
+                if punish_episode_counter == 0:
                   time_to_punish = False
             else:
                 if has_defected:
