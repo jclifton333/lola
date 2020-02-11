@@ -22,7 +22,7 @@ def update(mainPN, lr, final_delta_1_v, final_delta_2_v):
 
 def update_single(PN, lr, final_delta_v):
     update_theta_1 = PN.setparams(
-        PN.getparams() + lr * np.squeeze(final_delta_1_v))
+        PN.getparams() + lr * np.squeeze(final_delta_v))
 
 
 def clone_update(mainPN_clone):
@@ -97,6 +97,9 @@ def train(env, *, num_episodes, trace_length, batch_size,
 
     if not opp_model:
         corrections_func(mainPN, batch_size, trace_length, corrections, cube)
+        if punish:
+            corrections_func_single(coopPN, batch_size, trace_length)
+            corrections_func_single(punishPN, batch_size, trace_length)
     else:
         corrections_func([mainPN[0], mainPN_clone[1]],
                          batch_size, trace_length, corrections, cube)
@@ -104,10 +107,7 @@ def train(env, *, num_episodes, trace_length, batch_size,
                          batch_size, trace_length, corrections, cube)
         corrections_func([mainPN[1], mainPN_clone[0]],
                          batch_size, trace_length, corrections, cube)
-        if punish:
-            corrections_func_single(coopPN, batch_size, trace_length)
-            corrections_func_single(punishPN, batch_size, trace_length)
-
+        
         clone_update(mainPN_clone)
 
     init = tf.global_variables_initializer()

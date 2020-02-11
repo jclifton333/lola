@@ -135,4 +135,5 @@ def corrections_func_single(PN, batch_size, trace_length):
     v_0_grad_theta_0 = flatgrad(v_0_pi_0, PN.parameters)
 
     PN.grad = v_0_grad_theta_0
+    PN.delta = v_0_grad_theta_0
 
