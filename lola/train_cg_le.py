@@ -20,6 +20,11 @@ def update(mainPN, lr, final_delta_1_v, final_delta_2_v):
         mainPN[1].getparams() + lr * np.squeeze(final_delta_2_v))
 
 
+def update_single(PN, lr, final_delta_v):
+    update_theta_1 = PN.setparams(
+        PN.getparams() + lr * np.squeeze(final_delta_1_v))
+
+
 def clone_update(mainPN_clone):
     for i in range(2):
         mainPN_clone[i].log_pi_clone = tf.reduce_mean(
@@ -99,6 +104,9 @@ def train(env, *, num_episodes, trace_length, batch_size,
                          batch_size, trace_length, corrections, cube)
         corrections_func([mainPN[1], mainPN_clone[0]],
                          batch_size, trace_length, corrections, cube)
+        if punish:
+            corrections_func_single(coopPN, batch_size, trace_length)
+            corrections_func_single(punishPN, batch_size, trace_length)
 
         clone_update(mainPN_clone)
 
@@ -447,13 +455,14 @@ def train(env, *, num_episodes, trace_length, batch_size,
                     coopPN.gamma_array_inverse:
                         np.reshape(discount_array, [1, -1]),
                 }
-                values, update_coop = sess.run(
+                values, _, update_coop = sess.run(
                     [
                         coopPN.value,
                         coopPN.updateModel,
+                        coopPN.delta
                     ],
                     feed_dict=feed_dict)
-                update(coopPN, lr, update_coop, None) # ToDo: change update to accomodate None
+                update_single(coopPN, lr, update_coop) # ToDo: change update to accomodate None
 
             episodes_run_counter[agent] = episodes_run_counter[agent] * 0
             episodes_actions[agent] = episodes_actions[agent] * 0

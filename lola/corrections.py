@@ -111,3 +111,28 @@ def corrections_func(mainPN, batch_size, trace_length,
     else:
         mainPN[0].delta = v_0_grad_theta_0
         mainPN[1].delta = v_1_grad_theta_1
+
+
+def corrections_func_single(PN, batch_size, trace_length):
+    ac_logp0 = tf.reshape(PN.log_pi_action_bs_t,
+                          [batch_size, trace_length])
+
+    # Static exclusive cumsum
+    ac_logp0_cumsum = [tf.constant(0.)]
+    for i in range(trace_length - 1):
+        ac_logp0_cumsum.append(tf.add(ac_logp0_cumsum[-1], ac_logp0[:, i]))
+
+    # Compute v_0
+    mat_cumsum = ac_logp0[:, 0]
+    v_0 = mat_cumsum * PN.sample_reward[:, 0]
+    for i in range(1, trace_length):
+        mat_cumsum = tf.add(mat_cumsum, ac_logp0[:, i])
+        mat_cumsum = tf.add(mat_cumsum, ac_logp0_cumsum[i])
+        v_0 = tf.add(v_0, mat_cumsum * PN.sample_reward[:, i])
+    v_0 = 2 * tf.reduce_sum(v_0) / batch_size
+
+    v_0_pi_0 = 2*tf.reduce_sum(((PN.target-tf.stop_gradient(PN.value)) * PN.gamma_array) * PN.log_pi_action_bs_t) / batch_size
+    v_0_grad_theta_0 = flatgrad(v_0_pi_0, PN.parameters)
+
+    PN.grad = v_0_grad_theta_0
+

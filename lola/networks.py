@@ -112,7 +112,7 @@ class Pnetwork:
                 self.log_pi_action, [-1, trace_length]),1)
             self.log_pi_action_bs_t = tf.reshape(
                 self.log_pi_action, [self.batch_size, trace_length])
-            self.trainer = tf.train.GradientDescentOptimizer(learning_rate=1)
+            self.trainer = tf.train.GradientDescentOptimizer(learning_rate=2)
             self.updateModel = self.trainer.minimize(
                 self.loss, var_list=self.value_params)
 
