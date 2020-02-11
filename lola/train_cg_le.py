@@ -97,6 +97,9 @@ def train(env, *, num_episodes, trace_length, batch_size,
                          batch_size, trace_length, corrections, cube)
         corrections_func([mainPN[1], mainPN_clone[0]],
                          batch_size, trace_length, corrections, cube)
+        corrections_func([mainPN[1], mainPN_clone[0]],
+                         batch_size, trace_length, corrections, cube)
+
         clone_update(mainPN_clone)
 
     init = tf.global_variables_initializer()
@@ -171,7 +174,7 @@ def train(env, *, num_episodes, trace_length, batch_size,
                 episodes_run_counter[agent] += 1
                 lstm_state.append(np.zeros((batch_size, h_size[agent]*2)))
             if punish: 
-                lstm_coop_state = np.zeros((batch_size, h_size[1]**2))
+                lstm_coop_state = np.zeros((batch_size, h_size[1]*2))
 
             while j < max_epLength:
                 lstm_state_old = lstm_state
@@ -211,7 +214,6 @@ def train(env, *, num_episodes, trace_length, batch_size,
 
                     # Cooperative actions and lstm states
                     if punish and agent == 1: # Assuming only agent 1 can be non-cooperative
-                        pdb.set_trace()
                         a_coop, lstm_s_coop = sess.run(
                             [
                                 coopPN_step.predict,
@@ -331,15 +333,6 @@ def train(env, *, num_episodes, trace_length, batch_size,
                 [batch_size, trace_length, env.ob_space_shape[0],
                  env.ob_space_shape[1], env.ob_space_shape[2]])[:,-1,:,:,:]
 
-            if punish:
-                value_coop_next = sess.run(
-                    coopPN.value,
-                    feed_dict={
-                        coopPN_step.state_input: last_state,
-                        coopPN_step.lstm_state: lstm_coop_state,
-                    }
-                )
-
             # ToDo: should be option for updating punishPN if punish==True
             value_0_next, value_1_next = sess.run(
                 [mainPN_step[0].value, mainPN_step[1].value],
@@ -350,7 +343,12 @@ def train(env, *, num_episodes, trace_length, batch_size,
                     mainPN_step[1].lstm_state: lstm_state[1],
                 })
 
-            
+            if punish:
+                value_coop_next = sess.run(
+                    coopPN_step.value,
+                    feed_dict={coopPN_step.state_input: last_state,
+                               coopPN_step.lstm_state: lstm_coop_state}
+                )
             # if opp_model:
             #     ## update local clones
             #     update_clone = [mainPN_clone[0].update, mainPN_clone[1].update]
@@ -425,18 +423,18 @@ def train(env, *, num_episodes, trace_length, batch_size,
             #     })
             values, _, _, update1, update2 = sess.run(
               [
-                  mainPN[0].value,
-                  mainPN[0].updateModel,
-                  mainPN[1].updateModel,
-                  mainPN[0].delta,
-                  mainPN[1].delta
+                  network_to_update[0].value,
+                  network_to_update[0].updateModel,
+                  network_to_update[1].updateModel,
+                  network_to_update[0].delta,
+                  network_to_update[1].delta,
               ],
               feed_dict=feed_dict)
 
             update(network_to_update, lr, update1 / bs_mul, update2 / bs_mul)
             updated = True
             print('update params')
-
+            
             # Update cooperative policy network
             if punish and not time_to_punish:
                 feed_dict = {
@@ -449,11 +447,10 @@ def train(env, *, num_episodes, trace_length, batch_size,
                     coopPN.gamma_array_inverse:
                         np.reshape(discount_array, [1, -1]),
                 }
-                values, _, update_coop = sess.run(
+                values, update_coop = sess.run(
                     [
                         coopPN.value,
                         coopPN.updateModel,
-                        coopPN.delta
                     ],
                     feed_dict=feed_dict)
                 update(coopPN, lr, update_coop, None) # ToDo: change update to accomodate None
